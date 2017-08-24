@@ -10,11 +10,17 @@ namespace MyNamespace.Domain\n\
     public class MyPoco\n\
     {\n\
         public IDictionary<int, double> Stuff {get;set;}\n\
+        public IDictionary<int, Set<int>> Stuff2 {get;set;}\n\
+        public IDictionary<int, IDictionary<int, double>> Stuff3 {get;set;}\n\
+        public IDictionary<int, Someother.Type> Stuff4 {get;set;}\n\
     }\n\
 }\n";
 
 var expectedOutput = "interface MyPoco {\n\
     Stuff: { [index: number]: number };\n\
+    Stuff2: { [index: number]: Set<number> };\n\
+    Stuff3: { [index: number]: { [index: number]: number } };\n\
+    Stuff4: { [index: number]: Someother.Type };\n\
 }\n";
 
 var pocoGen = require('../src/index.js');

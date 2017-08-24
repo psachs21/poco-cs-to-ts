@@ -16,9 +16,13 @@ typeTranslation["string"] = "string";
 typeTranslation["JObject"] = "any";
 typeTranslation["dynamic"] = "any";
 typeTranslation["object"] = "any";
-var blockCommentRegex = /\/\*([\s\S]*)\*\//gm;
+typeTranslation["byte"] = "number";
+typeTranslation["char"] = "string";
+var blockCommentRegex = /\*(.|\n)*?\*/gm;
 var lineCommentRegex = /\/\/(.*)/g;
 var typeRegex = /( *)(?:public\s*|partial\s*|abstract\s*)*\s*(class|enum|struct|interface)\s+([\w\d_<>, ]+?)(?:\s*:\s*((?:(?:[\w\d\._<>, ]+?)(?:,\s+)?)+))?\s*\{((?:.|\n|\r)+?^\1\})/gm;
+var foundTypes = {};
+var foundInterfaces = {};
 function safeRegex(regex, input, options) {
     if (!input)
         return [];
@@ -176,10 +180,11 @@ function generateInterface(className, inherits, input, isInterface, options) {
     return definition;
 }
 function getVarType(typeCandidate, scope, options) {
-    var collectionRegex = /^(I?List|IEnumerable|ICollection|HashSet)<([\w\d]+)>$/gm;
-    var dictionaryRegex = /^I?Dictionary<([\w\d]+),\s?([\w\d]+)>$/gm;
-    var genericPropertyRegex = /^([\w\d]+)<([\w\d\<\> ,]+)>$/gm;
-    var arrayRegex = /^([\w\d]+)\[\]$/gm;
+    var collectionRegex = /^(I?(?:Serializable)?List|IEnumerable|ICollection|HashSet)<([\w\d<>\]\[.,\s]+)>$/gm;
+    var dictionaryRegex = /^I?(?:Serializable)?Dictionary<([\w\d.]+),\s?([\w\d<>\]\[,\s.]+)>$/gm;
+    var genericPropertyRegex = /^([\w\d]+)<([\w\d<>\s,]+)>$/gm;
+    var arrayRegex = /^([\w\d<>\]\[.]+)\[\]$/gm;
+    var keyValuePairRegex = /^I?KeyValuePair<([\w\d.]+),\s?([\w\d<>\]\[,\s.]+)>$/gm;
     var varType = typeTranslation[typeCandidate];
     if (varType) {
         if (scope && (options && options.typeResolver)) {
@@ -192,10 +197,11 @@ function getVarType(typeCandidate, scope, options) {
     var arrayMatch = safeRegex(arrayRegex, varType, options)[0];
     var genericPropertyMatch = safeRegex(genericPropertyRegex, varType, options)[0];
     var dictionaryMatch = safeRegex(dictionaryRegex, varType, options)[0];
+    var keyValuePairMatch = safeRegex(keyValuePairRegex, varType, options)[0];
     if (dictionaryMatch) {
         var type1 = dictionaryMatch[1];
         var type2 = dictionaryMatch[2];
-        varType = "{ [index: " + getVarType(type1, null, options) + "]: " + getVarType(type2, null, options) + " }";
+        varType = "{ [index: " + getVarType(type1, scope, options) + "]: " + getVarType(type2, scope, options) + " }";
     }
     else if (collectionMatch) {
         var collectionContentType = collectionMatch[2];
@@ -203,7 +209,12 @@ function getVarType(typeCandidate, scope, options) {
     }
     else if (arrayMatch) {
         var arrayType = arrayMatch[1];
-        varType = getVarType(arrayType) + "[]";
+        varType = getVarType(arrayType, scope, options) + "[]";
+    }
+    else if (keyValuePairMatch) {
+        var type1 = keyValuePairMatch[1];
+        var type2 = keyValuePairMatch[2];
+        varType = "{ key: " + getVarType(type1, scope, options) + ", value: " + getVarType(type2, scope, options) + " }";
     }
     else if (genericPropertyMatch) {
         var generic = genericPropertyMatch[1];
@@ -223,6 +234,8 @@ function getVarType(typeCandidate, scope, options) {
     if (scope && (options && options.typeResolver)) {
         varType = options.typeResolver(varType, scope);
     }
+    if (!dictionaryMatch && !collectionMatch && !arrayMatch && !genericPropertyMatch)
+        foundTypes[varType] = true;
     return varType;
 }
 function generateEnum(enumName, input, options) {
@@ -268,30 +281,50 @@ function stripDecorators(input) {
     var decoratorsRegex = /\[\w+\(\s*(?:\w+\s*\=\s*)?"[A-Öa-ö\s]*"\s*\)\]/gm;
     return input.replace(decoratorsRegex, "");
 }
-module.exports = function (input, options) {
-    input = removeComments(input);
-    var result = "";
-    if (!options) {
-        options = {};
+function replaceTabsWithSpaces(input) {
+    return input.replace(/\t/gm, '    ');
+}
+var handleRegex = function (type, typeName, inherits, options, content) {
+    if (type === "class" && options.extractEnums) {
+        var result = "namespace " + typeName + " {\n";
+        result += parseX(content, options);
+        result += '\n}\n';
+        return result;
     }
+    else if (type === "class" || type === "struct" || (type === "interface" && options.includeInterfaces)) {
+        foundInterfaces[typeName] = true;
+        return generateInterface(typeName, inherits, content, type === "interface", options);
+    }
+    else if (type === "enum") {
+        var result = "";
+        if (!options.baseNamespace && !options.extractEnums) {
+            result += "declare ";
+        }
+        return result + generateEnum(typeName, content, options);
+    }
+};
+var parseX = function (input, options) {
+    var result = "";
     for (var _i = 0, _a = safeRegex(typeRegex, input, options); _i < _a.length; _i++) {
         var match = _a[_i];
         var type = match[2];
         var typeName = match[3];
         var inherits = match[4];
+        var content = match[5];
         if (result.length > 0) {
             result += "\n";
         }
-        if (type === "class" || type === "struct" || (type === "interface" && options.includeInterfaces)) {
-            result += generateInterface(typeName, inherits, match[5], type === "interface", options);
-        }
-        else if (type === "enum") {
-            if (!options.baseNamespace) {
-                result += "declare ";
-            }
-            result += generateEnum(typeName, match[5], options);
-        }
+        result += handleRegex(type, typeName, inherits, options, content);
     }
+    return result;
+};
+var parse = function (input, options) {
+    input = removeComments(input);
+    input = replaceTabsWithSpaces(input);
+    if (!options) {
+        options = {};
+    }
+    var result = parseX(input, options);
     if (options.baseNamespace) {
         var firstLine = void 0;
         if (options.definitionFile === false) {
@@ -302,7 +335,7 @@ module.exports = function (input, options) {
         }
         var lines = [firstLine];
         lines = lines.concat(result.split("\n").map(function (line) {
-            return "    " + (/^(?:interface|enum|type)/.test(line) ? "export " + line : line);
+            return "    " + (/^(?:interface|enum|type|namespace)/.test(line) ? "export " + line : line);
         }));
         lines = lines.slice(0, lines.length - 1);
         lines = lines.concat("}");
@@ -310,3 +343,4 @@ module.exports = function (input, options) {
     }
     return result;
 };
+module.exports = parse;

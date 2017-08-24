@@ -46,6 +46,9 @@ namespace MyNamespace.Domain\n\
         public JObject DynamicContents { get; set; }\n\
         public dynamic DynamicToAny { get; set; }\n\
         public object ObjectToAny { get; set; }\n\
+        public IEnumerable<object[]> something { get; set; }\n\
+        public IEnumerable<int[][][][]> deepArray { get; set; }\n\
+        public IEnumerable<KeyValuePair<string, string>> keypairs { get; set; }\n\
     }\n\
 }\n";
 
@@ -65,6 +68,9 @@ var expectedOutput = "interface MyPoco {\n\
     DynamicContents: any;\n\
     DynamicToAny: any;\n\
     ObjectToAny: any;\n\
+    something: any[][];\n\
+    deepArray: number[][][][][];\n\
+    keypairs: { key: string, value: string }[];\n\
 }\n";
 
 var pocoGen = require('../src/index.js');
